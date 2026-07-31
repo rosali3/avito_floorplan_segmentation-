@@ -69,45 +69,62 @@ def group_by_image(coco: dict):
     return by_img, img_by_id
 
 
-def forward_loss(sam, transform, images_root: Path, img_rec: dict, anns: list[dict],
-                  device: str, train_mode: bool) -> torch.Tensor | None:
-    if not anns:
-        return None
+def _prep_one(transform, images_root: Path, img_rec: dict, device: str):
     image_bgr = cv2.imread(str(images_root / img_rec["file_name"]))
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    h, w = img_rec["height"], img_rec["width"]
-
     input_image = transform.apply_image(image_rgb)
-    input_tensor = torch.as_tensor(input_image, device=device).permute(2, 0, 1).contiguous()[None]
-    input_tensor = sam.preprocess(input_tensor)
+    t = torch.as_tensor(input_image, device=device).permute(2, 0, 1).contiguous()
+    return t  # [3,H',W'] до sam.preprocess (паддинг до квадрата img_size делаем после стека)
+
+
+def forward_loss_batch(sam, transform, images_root: Path, batch: list[tuple[dict, list[dict]]],
+                        device: str) -> torch.Tensor | None:
+    """batch: [(img_rec, anns), ...] — батчим самый дорогой шаг (ViT image_encoder)
+    по картинкам сразу, prompt_encoder/mask_decoder/loss считаем по каждой картинке
+    отдельно (боксов на картинку разное число, но это дёшево по сравнению с энкодером)."""
+    batch = [(rec, anns) for rec, anns in batch if anns]
+    if not batch:
+        return None
+
+    imgs = [_prep_one(transform, images_root, rec, device) for rec, _ in batch]
+    # sam.preprocess паддит до квадрата img_size (1024) и нормализует — применяем на
+    # уже собранном стеке, все картинки после ResizeLongestSide имеют одну сторону = img_size
+    padded = []
+    for t in imgs:
+        padded.append(sam.preprocess(t[None])[0])
+    input_tensor = torch.stack(padded, dim=0)  # [B,3,img_size,img_size]
 
     with torch.no_grad():
-        image_embedding = sam.image_encoder(input_tensor)
+        image_embeddings = sam.image_encoder(input_tensor)  # [B,C,h,w] — самый дорогой шаг, один раз на батч
 
-    boxes_xywh = np.array([ann["bbox"] for ann in anns], dtype=np.float32)
-    boxes_xyxy = boxes_xywh.copy()
-    boxes_xyxy[:, 2] += boxes_xyxy[:, 0]
-    boxes_xyxy[:, 3] += boxes_xyxy[:, 1]
-    boxes_t = transform.apply_boxes(boxes_xyxy, (h, w))
-    boxes_t = torch.as_tensor(boxes_t, dtype=torch.float32, device=device)
+    losses = []
+    for i, (img_rec, anns) in enumerate(batch):
+        h, w = img_rec["height"], img_rec["width"]
+        boxes_xywh = np.array([ann["bbox"] for ann in anns], dtype=np.float32)
+        boxes_xyxy = boxes_xywh.copy()
+        boxes_xyxy[:, 2] += boxes_xyxy[:, 0]
+        boxes_xyxy[:, 3] += boxes_xyxy[:, 1]
+        boxes_t = transform.apply_boxes(boxes_xyxy, (h, w))
+        boxes_t = torch.as_tensor(boxes_t, dtype=torch.float32, device=device)
 
-    with torch.no_grad():
-        sparse_emb, dense_emb = sam.prompt_encoder(points=None, boxes=boxes_t, masks=None)
+        with torch.no_grad():
+            sparse_emb, dense_emb = sam.prompt_encoder(points=None, boxes=boxes_t, masks=None)
 
-    low_res_masks, _iou_preds = sam.mask_decoder(
-        image_embeddings=image_embedding,
-        image_pe=sam.prompt_encoder.get_dense_pe(),
-        sparse_prompt_embeddings=sparse_emb,
-        dense_prompt_embeddings=dense_emb,
-        multimask_output=False,
-    )
-    masks_up = sam.postprocess_masks(low_res_masks, input_tensor.shape[-2:], (h, w))[:, 0]  # [N,h,w]
+        low_res_masks, _iou_preds = sam.mask_decoder(
+            image_embeddings=image_embeddings[i:i + 1],
+            image_pe=sam.prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse_emb,
+            dense_prompt_embeddings=dense_emb,
+            multimask_output=False,
+        )
+        masks_up = sam.postprocess_masks(low_res_masks, input_tensor.shape[-2:], (h, w))[:, 0]
 
-    gt_masks = np.stack([rasterize(ann["segmentation"], h, w) for ann in anns])
-    gt_t = torch.as_tensor(gt_masks, dtype=torch.float32, device=device)
+        gt_masks = np.stack([rasterize(ann["segmentation"], h, w) for ann in anns])
+        gt_t = torch.as_tensor(gt_masks, dtype=torch.float32, device=device)
 
-    loss = F.binary_cross_entropy_with_logits(masks_up, gt_t) + dice_loss(masks_up, gt_t).mean()
-    return loss
+        losses.append(F.binary_cross_entropy_with_logits(masks_up, gt_t) + dice_loss(masks_up, gt_t).mean())
+
+    return torch.stack(losses).mean()
 
 
 def main():
@@ -118,6 +135,9 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--max-instances-per-image", type=int, default=8,
                      help="ограничение под VRAM — все instance одной картинки идут одним forward")
+    ap.add_argument("--batch-size", type=int, default=4,
+                     help="картинок за один forward image_encoder'а (самый дорогой шаг) — "
+                          "раньше было жёстко 1, из-за чего эпоха на ~20k картинок шла часами")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--data-dir", default=None,
                      help="папка с train_coco.json/valid_coco.json — по умолчанию "
@@ -184,10 +204,11 @@ def main():
         train_ids = list(train_by_img.keys())
         random.Random(epoch).shuffle(train_ids)
         train_loss_sum, n_train = 0.0, 0
-        for image_id in train_ids:
-            anns = train_by_img[image_id][: args.max_instances_per_image]
-            loss = forward_loss(sam, transform, images_root, train_img_by_id[image_id],
-                                 anns, args.device, train_mode=True)
+        for bi in range(0, len(train_ids), args.batch_size):
+            chunk_ids = train_ids[bi:bi + args.batch_size]
+            batch = [(train_img_by_id[iid], train_by_img[iid][: args.max_instances_per_image])
+                     for iid in chunk_ids]
+            loss = forward_loss_batch(sam, transform, images_root, batch, args.device)
             if loss is None:
                 continue
             optimizer.zero_grad()
@@ -195,15 +216,21 @@ def main():
             optimizer.step()
             train_loss_sum += loss.item()
             n_train += 1
+            if n_train % 200 == 0:
+                print(f"[sam finetune] epoch {epoch:03d} train batch {n_train}/"
+                      f"{len(train_ids) // args.batch_size} loss={train_loss_sum / n_train:.4f} "
+                      f"{time.time() - t0:.0f}s", flush=True)
         train_loss = train_loss_sum / max(1, n_train)
 
         sam.mask_decoder.eval()
+        val_ids = list(valid_by_img.keys())
         val_loss_sum, n_val = 0.0, 0
         with torch.no_grad():
-            for image_id in valid_by_img:
-                anns = valid_by_img[image_id][: args.max_instances_per_image]
-                loss = forward_loss(sam, transform, images_root, valid_img_by_id[image_id],
-                                     anns, args.device, train_mode=False)
+            for bi in range(0, len(val_ids), args.batch_size):
+                chunk_ids = val_ids[bi:bi + args.batch_size]
+                batch = [(valid_img_by_id[iid], valid_by_img[iid][: args.max_instances_per_image])
+                         for iid in chunk_ids]
+                loss = forward_loss_batch(sam, transform, images_root, batch, args.device)
                 if loss is None:
                     continue
                 val_loss_sum += loss.item()
