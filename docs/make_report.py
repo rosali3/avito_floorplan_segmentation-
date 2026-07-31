@@ -70,7 +70,35 @@ doc.add_paragraph(
     "и метрики — без фикса обучение шло на систематически неверных таргетах."
 )
 
-doc.add_heading("2. Итоговое сравнение моделей (UGC test, реальные фото)", level=1)
+doc.add_heading("2. Валидация на обучающих данных (внутренний split, до UGC)", level=1)
+doc.add_paragraph(
+    "Метрики на 20% валидационной выборке из обучающих (чистых, схематичных) данных — "
+    "показывают, насколько хорошо модель выучила саму задачу до переноса на реальные фото."
+)
+val_table = doc.add_table(rows=1, cols=5)
+val_table.style = "Light Grid Accent 1"
+vh = val_table.rows[0].cells
+vh[0].text, vh[1].text, vh[2].text, vh[3].text, vh[4].text = (
+    "Модель", "Эпоха", "box mAP50 / 50:95", "segm/mask mAP50 / 50:95", "своя метрика")
+val_rows = [
+    ("RF-DETR-Seg", "4", "0.900 / 0.826", "0.834 / 0.560", "—"),
+    ("RF-DETR-Seg (новый прогон)", "9", "0.917 / 0.828", "0.844 / 0.578", "—"),
+    ("YOLO-seg", "53", "0.942 / 0.877", "0.911 / 0.690", "—"),
+    ("Mask R-CNN", "лучшая", "0.863 / 0.683", "0.858 / 0.675", "—"),
+    ("SegFormer", "60 (финал)", "—", "—", "val_mIoU = 0.863"),
+    ("UNet-simple", "24", "—", "—", "val_iou = 0.805"),
+]
+for row_vals in val_rows:
+    row = val_table.add_row().cells
+    for c, v in zip(row, row_vals):
+        c.text = v
+doc.add_paragraph(
+    "Важное наблюдение: высокая метрика на валидации НЕ гарантирует качество на UGC — "
+    "у SegFormer/UNet она даже выше, чем у YOLO/Mask R-CNN (mIoU/val_iou 0.80-0.86), но на "
+    "реальных фото они проигрывают на порядок (см. раздел 3) — из-за отсутствия instance-head."
+)
+
+doc.add_heading("3. Итоговое сравнение моделей (UGC test, реальные фото)", level=1)
 doc.add_picture(str(OUT_DIR / "chart_models.png"), width=Inches(6))
 table = doc.add_table(rows=1, cols=3)
 table.style = "Light Grid Accent 1"
@@ -80,7 +108,7 @@ for m, a50, a95 in zip(models, ap50, ap5095):
     row = table.add_row().cells
     row[0].text, row[1].text, row[2].text = m, f"{a50:.4f}", f"{a95:.4f}"
 
-doc.add_heading("3. Domain gap: чистая синтетика vs реальные фото", level=1)
+doc.add_heading("4. Domain gap: чистая синтетика vs реальные фото", level=1)
 doc.add_picture(str(OUT_DIR / "chart_domain_gap.png"), width=Inches(5.5))
 doc.add_paragraph(
     "Все модели показывают провал в 3-5 раз между валидацией на обучающих (чистых, схематичных) "
@@ -95,7 +123,24 @@ doc.add_paragraph(
     "рвёт один объект на несколько или сливает соседние объекты одного класса."
 )
 
-doc.add_heading("4. Zero-shot SAM практически не работает на этом домене", level=1)
+doc.add_heading("5. Что реально сделано против конкретных дефектов UGC", level=1)
+doc.add_paragraph(
+    "Важно честно разделить сделанное и обсуждённое:"
+)
+for bullet in [
+    "Водяные знаки — реализован и протестирован эксперимент (data_prep/mask_watermark.py): "
+    "закрашивание углов с логотипом Avito перед подачей в модель. Сравнение метрик "
+    "YOLO до/после НЕ доведено до конца (переключились на другую задачу) — эффект пока не измерен.",
+    "Повороты, JPEG-сжатие, разное качество съёмки — выявлены и задокументированы как причины "
+    "domain gap (в т.ч. визуально при ручной разметке для OCR-эксперимента), но отдельных "
+    "целевых фиксов под них не строили.",
+    "Вместо точечных фиксов — сейчас тестируется набор аугментаций от коллеги "
+    "(pipeline_fullaug_v2: 15 базовых + wall_styles/furniture/wall_morph_strong), обучение "
+    "RF-DETR на них идёт в моменте написания отчёта — результат ещё не готов.",
+]:
+    doc.add_paragraph(bullet, style="List Bullet")
+
+doc.add_heading("6. Zero-shot SAM практически не работает на этом домене", level=1)
 doc.add_paragraph(
     "Grounded-SAM (GroundingDINO + SAM без дообучения) даёт AP≈0.0002 — на уровне шума. "
     "GroundingDINO обучен на натуральных фото и не умеет находить комнаты на схематичных чертежах — "
@@ -103,7 +148,7 @@ doc.add_paragraph(
     "классов, с низкой уверенностью (0.26-0.44) и почти без пересечения по IoU с GT."
 )
 
-doc.add_heading("5. Furniture-aware реранкер: собранные данные и неудача генерализации", level=1)
+doc.add_heading("7. Furniture-aware реранкер: собранные данные и неудача генерализации", level=1)
 doc.add_paragraph(
     "Собран мебельный датасет из двух источников: SFPI (189160 инстансов, готовый COCO-формат) и "
     "CubiCasa5K (28637 инстансов после исправления серьёзной ошибки в системе координат — SVG-полигоны "
@@ -118,7 +163,7 @@ doc.add_paragraph(
     "гораздо дальше от реальных фото, чем даже основной датасет комнат."
 )
 
-doc.add_heading("6. OCR-распознавание площади комнат", level=1)
+doc.add_heading("8. OCR-распознавание площади комнат", level=1)
 doc.add_picture(str(OUT_DIR / "chart_ocr.png"), width=Inches(6))
 doc.add_paragraph(
     "Идея: на планах печатают площадь комнаты (\"номер/площадь\" дробью по центру), это можно прочитать "
@@ -133,7 +178,7 @@ doc.add_paragraph(
     "а не ограничение алгоритма."
 )
 
-doc.add_heading("7. Методологические решения", level=1)
+doc.add_heading("9. Методологические решения", level=1)
 for bullet in [
     "Единый train/valid split (80/20, seed=42) для всех моделей — честное сравнение.",
     "«Мягкая» (lenient) оценка: living/bedroom вместо room, bathroom+restroom объединены — "
@@ -143,7 +188,7 @@ for bullet in [
 ]:
     doc.add_paragraph(bullet, style="List Bullet")
 
-doc.add_heading("8. Открытые задачи", level=1)
+doc.add_heading("10. Открытые задачи", level=1)
 for bullet in [
     "RF-DETR переобучается на новых аугментированных данных (wall_styles/furniture/wall_morph "
     "аугментации от коллеги) — ожидаем сокращение domain gap.",
@@ -156,5 +201,7 @@ for bullet in [
 ]:
     doc.add_paragraph(bullet, style="List Bullet")
 
-doc.save(str(Path(__file__).parent / "report.docx"))
+import sys
+out_name = sys.argv[1] if len(sys.argv) > 1 else "report.docx"
+doc.save(str(Path(__file__).parent / out_name))
 print("saved docs/report.docx")
