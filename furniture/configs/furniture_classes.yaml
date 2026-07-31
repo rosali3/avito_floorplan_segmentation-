@@ -22,17 +22,56 @@ foreground_classes:
   11: chair           # FloorPlanCAD: chair; SFPI: armchair (тоже сюда, см. sfpi ниже)
   12: table           # FloorPlanCAD: table; SFPI: table
   13: cabinet         # FloorPlanCAD: bedside_cupboard/tv_cabinet/half_height_cabinet/high_cabinet — объединены
+  14: shower          # CubiCasa: Shower/ShowerScreen/ShowerCab/ShowerPlatform — сильный признак ванной
 
-# --- CubiCasa5K (SVG class="FixedFurniture <Name> ...") ---
+# --- CubiCasa5K (SVG class="FixedFurniture <Name> ...") — реальные имена без
+# пробелов (см. furniture/data_prep/parse_cubicasa_svg.py: name.split(" ")[0]
+# берёт только первое слово после "FixedFurniture ", остальное отбрасывается)
 cubicasa5k_to_canonical:
   Toilet: toilet
+  Urinal: toilet
   Sink: sink
+  DoubleSink: sink
+  DoubleSinkRight: sink
+  RoundSink: sink
+  CornerSink: sink
+  SideSink: sink
+  WaterTap: sink
   Bathtub: bathtub
-  "Sauna bench": sauna_bench
-  "Fire Place": fireplace
+  BathtubRound: bathtub
+  Jacuzzi: bathtub
+  Shower: shower
+  ShowerScreen: shower
+  ShowerScreenRoundRight: shower
+  ShowerScreenRoundLeft: shower
+  ShowerCab: shower
+  ShowerPlatform: shower
+  SaunaBench: sauna_bench
+  SaunaBenchMid: sauna_bench
+  SaunaBenchHigh: sauna_bench
+  SaunaBenchLow: sauna_bench
+  Fireplace: fireplace
+  FireplaceCorner: fireplace
+  FireplaceRound: fireplace
+  PlaceForFireplace: fireplace
+  PlaceForFireplaceCorner: fireplace
+  PlaceForFireplaceRound: fireplace
   Chimney: chimney
   Closet: closet
-  "Electrical Appliance": appliance
+  CoatCloset: closet
+  ClosetTriangle: closet
+  ClosetRound: closet
+  BaseCabinet: cabinet
+  BaseCabinetRound: cabinet
+  BaseCabinetTriangle: cabinet
+  WallCabinet: cabinet
+  CounterTop: cabinet
+  ElectricalAppliance: appliance
+  GasStove: appliance
+  WoodStove: appliance
+  SaunaStove: appliance
+  WashingMachine: appliance
+  # Housing/Misc/CoatRack — слишком неоднозначные/редкие, не берём
   # Window/Door — отдельные id-based элементы в CubiCasa SVG, это уже
   # покрыто нашим основным opening-классом в главном проекте, сюда не берём
 
@@ -53,8 +92,22 @@ floorplancad_to_canonical:
   # т.д.) НЕ берём — это структурные элементы, не мебель, уже покрыты основной
   # instance-seg моделью проекта
 
-# --- SFPI --- (заполнить после проверки реального формата аннотаций)
-sfpi_to_canonical: {}
+# --- SFPI --- (уже готовый COCO-формат, Annotations/{train,val,test}_annotation.json)
+sfpi_to_canonical:
+  armchair: chair
+  bed: bed
+  sink1: sink
+  sink2: sink
+  sink3: sink
+  sink4: sink
+  sofa1: sofa
+  sofa2: sofa
+  table1: table
+  table2: table
+  table3: table
+  tub: bathtub
+  # door1/door2/window1/window2 — НЕ берём, это двери/окна (opening),
+  # уже покрыты основной instance-seg моделью проекта
 
 min_instance_area_px: 16
 train_val_split: 0.8
