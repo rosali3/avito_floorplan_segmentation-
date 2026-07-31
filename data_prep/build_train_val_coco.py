@@ -39,13 +39,14 @@ from coco_utils import (
     mask_to_instances,
 )
 
-SOURCES = ("resplan", "cubicasa")
-
-
 def list_images(combined_out_root: Path) -> dict[str, list[str]]:
-    """{"resplan": ["14877.png", ...], "cubicasa": [...]}"""
+    """{"resplan": ["14877.png", ...], "cubicasa": [...], ...} — источники
+    определяются автоматически по подпапкам images/ (поддерживает как
+    обычный combined_out с resplan/cubicasa, так и combined_out_v2 с
+    дополнительным cubicasa_mf)."""
     out = {}
-    for src in SOURCES:
+    sources = sorted(p.name for p in (combined_out_root / "images").iterdir() if p.is_dir())
+    for src in sources:
         d = combined_out_root / "images" / src
         files = sorted(p.name for p in d.glob("*.png"))
         if not files:
