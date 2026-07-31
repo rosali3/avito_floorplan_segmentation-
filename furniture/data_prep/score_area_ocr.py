@@ -35,8 +35,25 @@ DECIMAL_RE = re.compile(r"^\d{1,2}[.,]\d{1,2}$")
 TOL = 0.15  # допуск на ошибку OCR-распознавания цифр (напр. "7.1" vs "7.7")
 
 
-def ocr_all_numbers(reader, image_bgr) -> list[float]:
-    results = reader.readtext(image_bgr)
+def enhance_contrast(image_bgr):
+    """CLAHE на L-канале (LAB) + лёгкий unsharp mask — реальные UGC-фото часто
+    тусклые/засвеченные, мелкий печатный шрифт площади теряется в низком
+    контрасте ещё до апскейла."""
+    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l, a, b])
+    out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    blur = cv2.GaussianBlur(out, (0, 0), 2.0)
+    out = cv2.addWeighted(out, 1.5, blur, -0.5, 0)
+    return out
+
+
+def ocr_all_numbers(reader, image_bgr, enhance=False, mag_ratio=1.0) -> list[float]:
+    if enhance:
+        image_bgr = enhance_contrast(image_bgr)
+    results = reader.readtext(image_bgr, mag_ratio=mag_ratio)
     vals = []
     for _bbox, text, _conf in results:
         t = text.strip().replace(",", ".")
@@ -50,6 +67,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manual-csv", required=True)
     ap.add_argument("--images-dir", required=True)
+    ap.add_argument("--enhance", action="store_true", help="CLAHE + unsharp перед OCR")
+    ap.add_argument("--mag-ratio", type=float, default=1.0, help="EasyOCR mag_ratio (детектор мелкого текста)")
     args = ap.parse_args()
 
     rows_by_image: dict[str, list[dict]] = defaultdict(list)
@@ -77,7 +96,7 @@ def main():
         if img is None:
             print(f"[score] пропускаю {file_name} (не найдена)")
             continue
-        detected = ocr_all_numbers(reader, img)
+        detected = ocr_all_numbers(reader, img, enhance=args.enhance, mag_ratio=args.mag_ratio)
 
         for row in rows:
             total += 1
