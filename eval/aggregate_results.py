@@ -31,6 +31,7 @@ MODEL_DIRS = [
     ("segformer", "SegFormer (+connected components)"),
     ("sam_zeroshot", "SAM zero-shot (Grounded-SAM)"),
     ("sam_finetuned", "SAM fine-tuned"),
+    ("unet_baseline", "UNet-simple (внешняя, семантическая)"),
 ]
 
 
