@@ -1,0 +1,26 @@
+# Виртуальные окружения
+.venv-local-infer/
+venv/
+venv-mmdet/
+
+# Веса моделей и производные данные (большие, воспроизводимы через data_prep/*)
+weights/
+output/
+data/
+data_v2/
+furniture/raw/
+
+# Сторонние клонированные репозитории (не наш код)
+GroundingDINO/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# ОС/редакторы
+.DS_Store
+Thumbs.db
+
+# Логи
+*.log

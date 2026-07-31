@@ -1,0 +1,61 @@
+# Единая таксономия мебели/сантехники для furniture-aware реранкера комнат.
+#
+# Два непересекающихся семейства понятий из разных источников:
+#  - "фикстуры" (CubiCasa5K FixedFurniture) — встроенная сантехника/техника,
+#    сильно определяет ТИП комнаты (унитаз -> санузел, плита -> кухня)
+#  - "мебель" (FloorPlanCAD furniture) — подвижная мебель, тоже сильный сигнал
+#    (кровать -> спальня, диван -> гостиная), но из другого источника/стиля
+#
+# Обе семьи нужны реранкеру — он именно про "не должно быть дивана в ванной".
+
+foreground_classes:
+  1: toilet          # CubiCasa: Toilet
+  2: sink             # CubiCasa: Sink; FloorPlanCAD: sink
+  3: bathtub          # CubiCasa: Bathtub; FloorPlanCAD: bath
+  4: sauna_bench      # CubiCasa: Sauna Bench
+  5: fireplace        # CubiCasa: Fire Place
+  6: chimney          # CubiCasa: Chimney
+  7: closet           # CubiCasa: Closet; FloorPlanCAD: wardrobe
+  8: appliance        # CubiCasa: Electrical Appliance
+  9: sofa             # FloorPlanCAD: sofa; SFPI: sofa/armchair
+  10: bed             # FloorPlanCAD: bed; SFPI: bed
+  11: chair           # FloorPlanCAD: chair; SFPI: armchair (тоже сюда, см. sfpi ниже)
+  12: table           # FloorPlanCAD: table; SFPI: table
+  13: cabinet         # FloorPlanCAD: bedside_cupboard/tv_cabinet/half_height_cabinet/high_cabinet — объединены
+
+# --- CubiCasa5K (SVG class="FixedFurniture <Name> ...") ---
+cubicasa5k_to_canonical:
+  Toilet: toilet
+  Sink: sink
+  Bathtub: bathtub
+  "Sauna bench": sauna_bench
+  "Fire Place": fireplace
+  Chimney: chimney
+  Closet: closet
+  "Electrical Appliance": appliance
+  # Window/Door — отдельные id-based элементы в CubiCasa SVG, это уже
+  # покрыто нашим основным opening-классом в главном проекте, сюда не берём
+
+# --- FloorPlanCAD (30 классов, берём только мебельные 11) ---
+floorplancad_to_canonical:
+  sofa: sofa
+  bed: bed
+  chair: chair
+  table: table
+  bedside_cupboard: cabinet
+  tv_cabinet: cabinet
+  half_height_cabinet: cabinet
+  high_cabinet: cabinet
+  wardrobe: closet
+  sink: sink
+  bath: bathtub
+  # остальные ~19 категорий FloorPlanCAD (двери/окна/стены/лестницы/розетки и
+  # т.д.) НЕ берём — это структурные элементы, не мебель, уже покрыты основной
+  # instance-seg моделью проекта
+
+# --- SFPI --- (заполнить после проверки реального формата аннотаций)
+sfpi_to_canonical: {}
+
+min_instance_area_px: 16
+train_val_split: 0.8
+split_seed: 42

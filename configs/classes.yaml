@@ -1,0 +1,84 @@
+# Единая таксономия классов для сравнительного исследования instance segmentation.
+#
+# Train/valid данные (combined_out = ResPlan_v2 + CubiCasa5K, синтетические/векторные
+# floor-plan чертежи) размечены СЕМАНТИЧЕСКИ (один класс на пиксель, 8 классов,
+# см. combined_out/class_mapping.json). Instance-аннотации мы получаем сами:
+# connected components одного класса на маске = один instance (см. data_prep/coco_utils.py).
+#
+# Test данные (ugc_labeled = реальные BTI-планы с Avito) размечены в Roboflow как
+# instance segmentation COCO JSON с 14 сырыми категориями (шире и по-другому
+# устроенными, чем наша train-таксономия). Чтобы посчитать mAP на test, категории
+# UGC нужно свести к train-таксономии — иначе "restroom" из UGC и "bathroom" из
+# train будут двумя разными классами и никогда не совпадут при сравнении с GT.
+#
+# Итоговых классов-объектов — 7 (background не является instance-классом).
+
+foreground_classes:
+  # id должен совпадать с pixel-value в масках combined_out (class_mapping.json)
+  1: living
+  2: bedroom
+  3: bathroom
+  4: kitchen
+  5: balcony
+  6: wall
+  7: opening   # combined_out сам определяет opening = двери + окна (см. README_GENERIC.md)
+
+background_id: 0
+ignore_id: 255          # исключается и из instance-экстракции, и из метрик
+
+# --- Маппинг сырых категорий ugc_labeled (Roboflow) -> наша таксономия ---
+#
+# Явное объединение restroom -> bathroom сделано по прямому указанию заказчика
+# исследования (UGC различает "restroom"/"bathroom", наша таксономия — нет).
+# door/window/enterence -> opening сделано по АНАЛОГИИ: combined_out уже определяет
+# opening как "двери+окна", entrance — тоже разновидность двери, так что это
+# расширение того же определения, а не отдельное произвольное решение.
+#
+# Категории, для которых слева нет соответствия справа (coridor, hall, room,
+# stairs, storage, и корневая roboflow-категория "toilet" id=0/supercategory=none,
+# у которой обычно нет реальных аннотаций) — ИСКЛЮЧАЮТСЯ из test GT при оценке:
+# соответствующие annotation'ы просто выбрасываются перед подсчётом COCOeval,
+# чтобы модель не штрафовалась за классы, которых не было в обучающей таксономии,
+# и чтобы не пришлось выдумывать натянутое соответствие.
+ugc_to_canonical:
+  bathroom: bathroom
+  restroom: bathroom
+  kitchen: kitchen
+  balcony: balcony
+  wall: wall
+  door: opening
+  window: opening
+  enterence: opening
+
+ugc_excluded_categories:
+  - toilet      # roboflow root/supercategory-placeholder, id=0, проверить при конвертации что реальных anns нет
+  - coridor
+  - hall
+  - room
+  - stairs
+  - storage
+
+# Минимальная площадь (px^2, в разрешении исходной маски/картинки) для connected
+# component, чтобы считаться instance, а не шумом/артефактом растеризации.
+min_instance_area_px: 24
+
+# Слияние фрагментов одного класса, разделённых ignore_id-полосой шириной до
+# N px (см. mask_to_instances в coco_utils.py). Подтверждено экспериментом
+# (progress.md, 2026-07-30): ~42% сырых масок combined_out содержат
+# ignore-пиксели; dilate_gap_px=2 сливает спурионные разрывы комнат
+# (bedroom -33% инстансов/картинку в тесте), почти не трогая wall/opening —
+# те у floor plan'ов и должны состоять из многих реальных сегментов между
+# проёмами. 0 = без слияния (старое поведение).
+dilate_gap_px: 2
+
+# Аппроксимация полигона контура (cv2.approxPolyDP), epsilon как доля периметра.
+polygon_approx_epsilon_frac: 0.005
+
+# Наш собственный сплит (независим от train.txt/val_cubicasa.txt/test_cubicasa.txt
+# из combined_out — те решают другую, свою задачу(domain-transfer ablation для
+# семантической сегментации). Для этого сравнительного instance-seg исследования
+# берём ВЕСЬ корпус combined_out (resplan+cubicasa, 20079 картинок) и делаем один
+# честный 80/20 сплит, стратифицированный по источнику (resplan/cubicasa), чтобы
+# пропорция источников была одинаковой в train и valid.
+train_val_split: 0.8
+split_seed: 42

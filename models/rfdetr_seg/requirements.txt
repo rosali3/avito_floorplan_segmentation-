@@ -1,0 +1,6 @@
+rfdetr
+supervision
+pillow
+numpy
+pycocotools
+tensorboard

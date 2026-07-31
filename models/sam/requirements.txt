@@ -1,0 +1,10 @@
+segment-anything
+opencv-python-headless
+pycocotools
+tensorboard
+torch
+torchvision
+numpy
+# GroundingDINO ставится отдельно из исходников, см. SETUP.md:
+#   git clone https://github.com/IDEA-Research/GroundingDINO.git
+#   cd GroundingDINO && pip install -e .

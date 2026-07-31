@@ -1,0 +1,31 @@
+# Абсолютные пути — единственное место, где их нужно поменять,
+# если датасеты переедут в другое место (напр. при переносе на GPU-сервер:
+# тут будут уже /home/<user>/... пути вместо C:/Users/...).
+#
+# Альтернатива правке файла — переменные окружения (перекрывают значения ниже,
+# см. data_prep/coco_utils.py:_ENV_OVERRIDES), удобно для сервера/CI:
+#   CLAUDE_COMBINED_OUT_ROOT, CLAUDE_UGC_LABELED_ROOT, CLAUDE_PROJECT_ROOT
+#
+# Все data_prep/* и models/*/train.py|infer_and_eval*.py читают пути ТОЛЬКО
+# отсюда (через load_paths()) — ничего, кроме этого файла (или env-переменных
+# выше), редактировать при переезде не нужно.
+
+# Источник обучающих данных: семантические маски floor-plan (ResPlan_v2 + CubiCasa5K).
+# ВАЖНО: этот каталог только ЧИТАЕМ (никогда не пишем внутрь combined_out/).
+combined_out_root: "C:/Users/user/Downloads/avito-toilet/combined_out"
+
+# UGC-датасет (реальные BTI-планы с Avito, размечены в Roboflow, COCO JSON).
+# Используется ТОЛЬКО как test-сплит (не для train/valid!). Тоже только ЧИТАЕМ.
+ugc_labeled_root: "C:/Users/user/Downloads/avito-toilet/ugc_labeled"
+
+# Наша собственная рабочая папка — сюда пишутся все производные данные,
+# конфиги, чекпоинты, логи и предсказания. Больше никуда не пишем.
+project_root: "C:/Users/user/Downloads/avito-toilet/claude_instseg_compare"
+
+# Производные пути (создаются скриптами data_prep/*, не руками)
+derived:
+  data_dir: "${project_root}/data"                       # data/train_coco.json, data/valid_coco.json, data/images/...
+  ugc_test_dir: "${project_root}/data/ugc_test"           # объединённый test COCO + картинки
+  rfdetr_dataset_dir: "${project_root}/data/rfdetr_ds"    # roboflow-style train/valid папки для rfdetr
+  yolo_dataset_dir: "${project_root}/data/yolo_ds"        # YOLO-seg формат для ultralytics
+  output_dir: "${project_root}/output"                    # output/<model_name>/{checkpoints,logs,predictions}

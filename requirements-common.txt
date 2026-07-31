@@ -1,0 +1,9 @@
+# Общие зависимости для data_prep/* и eval/* — ставь в КАЖДЫЙ venv, который
+# будешь использовать для конкретной модели (models/<name>/requirements.txt
+# содержит специфику этой модели поверх этого списка).
+pyyaml
+opencv-python-headless
+numpy
+tqdm
+pycocotools
+Pillow

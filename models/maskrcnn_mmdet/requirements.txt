@@ -1,0 +1,7 @@
+# Ставить через openmim (см. SETUP.md), НЕ через обычный pip install -r:
+#   pip install -U openmim
+#   mim install mmengine "mmcv>=2.0.0,<2.2.0"
+#   mim install mmdetection
+# Этот файл — только для справки / для pycocotools, который ставится обычным pip.
+pycocotools
+numpy

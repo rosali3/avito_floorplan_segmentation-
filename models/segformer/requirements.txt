@@ -1,0 +1,9 @@
+torch
+torchvision
+transformers
+accelerate
+albumentations
+opencv-python-headless
+tensorboard
+pycocotools
+numpy
