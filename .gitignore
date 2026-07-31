@@ -9,6 +9,11 @@ output/
 data/
 data_v2/
 furniture/raw/
+furniture/data/
+furniture/output/
+runs/
+*.pt
+*.pth
 
 # Сторонние клонированные репозитории (не наш код)
 GroundingDINO/
