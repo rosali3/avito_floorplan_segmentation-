@@ -31,6 +31,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--score-thr", type=float, default=0.3)
+    ap.add_argument("--model-key", default="maskrcnn_mmdet",
+                     help="папка в output/ для предсказаний+метрик — задай отдельное имя, "
+                          "чтобы не перезаписать результаты другого чекпоинта")
     args = ap.parse_args()
 
     from mmdet.apis import init_detector, inference_detector
@@ -72,7 +75,7 @@ def main():
                 pred["segmentation"] = binary_mask_to_rle(masks[i].astype(np.uint8))
             predictions.append(pred)
 
-    out_dir = Path(paths["derived"]["output_dir"]) / "maskrcnn_mmdet" / "predictions"
+    out_dir = Path(paths["derived"]["output_dir"]) / args.model_key / "predictions"
     out_dir.mkdir(parents=True, exist_ok=True)
     pred_path = out_dir / "test_predictions.json"
     with open(pred_path, "w", encoding="utf-8") as f:

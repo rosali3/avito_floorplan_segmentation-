@@ -67,6 +67,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--threshold", type=float, default=0.3)
+    ap.add_argument("--model-key", default="rfdetr_seg",
+                     help="папка в output/ для предсказаний+метрик — задай отдельное имя "
+                          "(напр. rfdetr_seg_fullaug), чтобы не перезаписать результаты другого чекпоинта")
     args = ap.parse_args()
 
     from rfdetr import RFDETRSegMedium
@@ -105,7 +108,7 @@ def main():
                 pred["segmentation"] = binary_mask_to_rle(mask)
             predictions.append(pred)
 
-    out_dir = Path(paths["derived"]["output_dir"]) / "rfdetr_seg" / "predictions"
+    out_dir = Path(paths["derived"]["output_dir"]) / args.model_key / "predictions"
     out_dir.mkdir(parents=True, exist_ok=True)
     pred_path = out_dir / "test_predictions.json"
     with open(pred_path, "w", encoding="utf-8") as f:

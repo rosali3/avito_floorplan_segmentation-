@@ -31,6 +31,9 @@ def main():
     ap.add_argument("--weights", required=True)
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--model-key", default="yolo_seg",
+                     help="папка в output/ для предсказаний+метрик — задай отдельное имя "
+                          "(напр. yolo_seg_fullaug), чтобы не перезаписать результаты другого чекпоинта")
     args = ap.parse_args()
 
     from ultralytics import YOLO
@@ -74,7 +77,7 @@ def main():
                 "segmentation": rle,
             })
 
-    out_dir = Path(paths["derived"]["output_dir"]) / "yolo_seg" / "predictions"
+    out_dir = Path(paths["derived"]["output_dir"]) / args.model_key / "predictions"
     out_dir.mkdir(parents=True, exist_ok=True)
     pred_path = out_dir / "test_predictions.json"
     with open(pred_path, "w", encoding="utf-8") as f:
