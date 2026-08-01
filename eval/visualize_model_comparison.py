@@ -25,6 +25,7 @@ from pycocotools.coco import COCO
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "data_prep"))
 from coco_utils import load_paths  # noqa: E402
+from mask_nms import mask_nms  # noqa: E402
 
 MODEL_DIRS = [
     ("rfdetr_seg", "RF-DETR-Seg"),
@@ -141,15 +142,22 @@ def ignore_mask_for_image(ignore_by_img: dict[int, list[dict]], img_id: int, h: 
     return m
 
 
-def load_predictions_cache(output_dir: Path) -> dict[str, list[dict] | None]:
+def load_predictions_cache(output_dir: Path, img_wh: dict[int, tuple[int, int]],
+                            score_thresh: float, nms_iou: float | None) -> dict[str, list[dict] | None]:
     cache: dict[str, list[dict] | None] = {}
     for model_key, _ in MODEL_DIRS:
         pred_path = output_dir / model_key / "predictions" / "test_predictions.json"
-        if pred_path.is_file():
-            with open(pred_path, "r", encoding="utf-8") as f:
-                cache[model_key] = json.load(f)
-        else:
+        if not pred_path.is_file():
             cache[model_key] = None
+            continue
+        with open(pred_path, "r", encoding="utf-8") as f:
+            preds = json.load(f)
+        preds = [p for p in preds if p.get("score", 1.0) >= score_thresh]
+        if nms_iou is not None:
+            n_before = len(preds)
+            preds = mask_nms(preds, img_wh, iou_thresh=nms_iou)
+            print(f"[visualize_model_comparison] {model_key}: NMS {n_before} -> {len(preds)} предсказаний")
+        cache[model_key] = preds
     return cache
 
 
@@ -215,6 +223,9 @@ def main():
                      help="папка для коллажей при --all")
     ap.add_argument("--gt-out-dir", default="docs/report_assets/ugc_gt_masks",
                      help="папка для отдельных GT-наложений (без сетки моделей)")
+    ap.add_argument("--nms-iou", type=float, default=0.5,
+                     help="mask-NMS: если две маски (любых классов) пересекаются сильнее "
+                          "этого IoU, оставляем только более уверенную. -1 чтобы выключить")
     args = ap.parse_args()
 
     if not args.all and not args.image_substr:
@@ -225,7 +236,9 @@ def main():
     output_dir = Path(paths["derived"]["output_dir"])
 
     coco = COCO(str(ugc_test_dir / "test_coco.json"))
-    preds_cache = load_predictions_cache(output_dir)
+    img_wh = {im["id"]: (im["height"], im["width"]) for im in coco.loadImgs(coco.getImgIds())}
+    nms_iou = args.nms_iou if args.nms_iou >= 0 else None
+    preds_cache = load_predictions_cache(output_dir, img_wh, args.score_thresh, nms_iou)
     room_by_img, true_ignore_by_img = load_ignore_regions_by_img(ugc_test_dir / "test_coco.json")
     available = [k for k, v in preds_cache.items() if v is not None]
     missing = [k for k, v in preds_cache.items() if v is None]
