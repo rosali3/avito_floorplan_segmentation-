@@ -206,9 +206,9 @@ def main():
                      help="папка для коллажей при --all")
     ap.add_argument("--gt-out-dir", default="docs/report_assets/ugc_gt_masks",
                      help="папка для отдельных GT-наложений (без сетки моделей)")
-    ap.add_argument("--rfdetr-thresh", type=float, default=0.15,
+    ap.add_argument("--rfdetr-thresh", type=float, default=0.1,
                      help="отдельный (пониженный) порог confidence для RF-DETR")
-    ap.add_argument("--yolo-thresh", type=float, default=0.15,
+    ap.add_argument("--yolo-thresh", type=float, default=0.1,
                      help="отдельный (пониженный) порог confidence для YOLO")
     args = ap.parse_args()
 

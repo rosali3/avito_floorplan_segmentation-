@@ -119,10 +119,12 @@ def main():
             raw_cat_id = ann["category_id"]
             if raw_cat_id not in raw_id_to_canon_id:
                 n_dropped_by_excluded_cat += 1
+                raw_cat_name = next(c["name"] for c in coco["categories"] if c["id"] == raw_cat_id)
                 merged_ignore_regions.append({
                     "image_id": old_to_new_image_id[ann["image_id"]],
                     "segmentation": ann["segmentation"],
                     "bbox": ann["bbox"],
+                    "raw_name": raw_cat_name,
                 })
                 continue
             merged_anns.append({
