@@ -39,18 +39,26 @@ MODEL_DIRS = [
 ]
 
 # id класса -> цвет (RGB 0..255)
+ROOM_ID = 8
+LIVING_ID, BEDROOM_ID = 1, 2
 PALETTE = {
-    1: (255, 99, 71),    # living
-    2: (60, 179, 113),   # bedroom
+    1: (255, 99, 71),    # living (фактически не рисуется — см. remap ниже)
+    2: (60, 179, 113),   # bedroom (тоже)
     3: (65, 105, 225),   # bathroom
     4: (255, 215, 0),    # kitchen
     5: (238, 130, 238),  # balcony
     6: (128, 128, 128),  # wall
     7: (255, 140, 0),    # opening
+    8: (139, 69, 19),    # room (raw UGC "room" + переименованные living/bedroom)
 }
 
-CLASS_NAMES = {1: "living", 2: "bedroom", 3: "bathroom", 4: "kitchen",
-               5: "balcony", 6: "wall", 7: "opening"}
+# living/bedroom не показываем в легенде — сырой UGC их не различает, поэтому
+# и GT, и предсказания сведены к общему "room" (см. remap_room_id)
+CLASS_NAMES = {3: "bathroom", 4: "kitchen", 5: "balcony", 6: "wall", 7: "opening", 8: "room"}
+
+
+def remap_room_id(cid: int) -> int:
+    return ROOM_ID if cid in (LIVING_ID, BEDROOM_ID) else cid
 
 
 def legend_handles():
@@ -94,12 +102,16 @@ def draw_ignore_hatch(image_bgr: np.ndarray, ignore_mask: np.ndarray, spacing: i
     return out
 
 
-def gt_class_masks(coco: COCO, img_id: int, h: int, w: int) -> dict[int, np.ndarray]:
+def gt_class_masks(coco: COCO, img_id: int, h: int, w: int,
+                    room_by_img: dict[int, list[dict]]) -> dict[int, np.ndarray]:
     anns = coco.loadAnns(coco.getAnnIds(imgIds=img_id))
     out: dict[int, np.ndarray] = {}
     for ann in anns:
         m = ann_or_pred_to_mask(ann["segmentation"], h, w)
         out[ann["category_id"]] = out.get(ann["category_id"], np.zeros((h, w), bool)) | m
+    for region in room_by_img.get(img_id, []):
+        m = ann_or_pred_to_mask(region["segmentation"], h, w)
+        out[ROOM_ID] = out.get(ROOM_ID, np.zeros((h, w), bool)) | m
     return out
 
 
@@ -108,18 +120,23 @@ def pred_class_masks(preds: list[dict], img_id: int, h: int, w: int, score_thres
     for p in preds:
         if p["image_id"] != img_id or p.get("score", 1.0) < score_thresh:
             continue
+        cid = remap_room_id(p["category_id"])
         m = ann_or_pred_to_mask(p["segmentation"], h, w)
-        out[p["category_id"]] = out.get(p["category_id"], np.zeros((h, w), bool)) | m
+        out[cid] = out.get(cid, np.zeros((h, w), bool)) | m
     return out
 
 
-def load_ignore_regions_by_img(gt_json_path: Path) -> dict[int, list[dict]]:
+def load_ignore_regions_by_img(gt_json_path: Path) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
+    """Возвращает (room_by_img, true_ignore_by_img) — room рисуется как обычный
+    класс, coridor/hall/stairs/storage/toilet остаются заштрихованы как ignore."""
     with open(gt_json_path, "r", encoding="utf-8") as f:
         gt = json.load(f)
-    by_img: dict[int, list[dict]] = {}
+    room_by_img: dict[int, list[dict]] = {}
+    ignore_by_img: dict[int, list[dict]] = {}
     for region in gt.get("ignore_regions", []):
-        by_img.setdefault(region["image_id"], []).append(region)
-    return by_img
+        bucket = room_by_img if region.get("raw_name") == "room" else ignore_by_img
+        bucket.setdefault(region["image_id"], []).append(region)
+    return room_by_img, ignore_by_img
 
 
 def ignore_mask_for_image(ignore_by_img: dict[int, list[dict]], img_id: int, h: int, w: int) -> np.ndarray:
@@ -143,7 +160,7 @@ def load_predictions_cache(output_dir: Path) -> dict[str, list[dict] | None]:
 
 def build_collage(coco: COCO, img_info: dict, ugc_test_dir: Path,
                    score_thresh: float, out_path: Path, preds_cache: dict,
-                   ignore_by_img: dict[int, list[dict]],
+                   room_by_img: dict[int, list[dict]], true_ignore_by_img: dict[int, list[dict]],
                    thresh_overrides: dict[str, float] | None = None,
                    gt_out_dir: Path | None = None) -> None:
     thresh_overrides = thresh_overrides or {}
@@ -153,10 +170,10 @@ def build_collage(coco: COCO, img_info: dict, ugc_test_dir: Path,
         print(f"[visualize_model_comparison] пропуск (не читается): {img_info['file_name']}")
         return
 
-    gt_overlay = semantic_overlay(image_bgr, gt_class_masks(coco, img_id, h, w))
-    ig_mask = ignore_mask_for_image(ignore_by_img, img_id, h, w)
+    gt_overlay = semantic_overlay(image_bgr, gt_class_masks(coco, img_id, h, w, room_by_img))
+    ig_mask = ignore_mask_for_image(true_ignore_by_img, img_id, h, w)
     gt_overlay = draw_ignore_hatch(gt_overlay, ig_mask)
-    panels = [("GT (разметка, штрих = ignore: room/hall/...)", gt_overlay)]
+    panels = [("GT (разметка, штрих = ignore: coridor/hall/stairs/storage)", gt_overlay)]
 
     if gt_out_dir is not None:
         gt_out_dir.mkdir(parents=True, exist_ok=True)
@@ -226,7 +243,7 @@ def main():
 
     coco = COCO(str(ugc_test_dir / "test_coco.json"))
     preds_cache = load_predictions_cache(output_dir)
-    ignore_by_img = load_ignore_regions_by_img(ugc_test_dir / "test_coco.json")
+    room_by_img, true_ignore_by_img = load_ignore_regions_by_img(ugc_test_dir / "test_coco.json")
     available = [k for k, v in preds_cache.items() if v is not None]
     missing = [k for k, v in preds_cache.items() if v is None]
     print(f"[visualize_model_comparison] предсказания есть: {available}")
@@ -240,7 +257,7 @@ def main():
         for img_info in all_imgs:
             stem = Path(img_info["file_name"]).stem
             build_collage(coco, img_info, ugc_test_dir, args.score_thresh,
-                          out_dir / f"{stem}.png", preds_cache, ignore_by_img,
+                          out_dir / f"{stem}.png", preds_cache, room_by_img, true_ignore_by_img,
                           thresh_overrides=thresh_overrides, gt_out_dir=gt_out_dir)
         print(f"[visualize_model_comparison] всего: {len(all_imgs)} -> {out_dir}")
         print(f"[visualize_model_comparison] GT-наложения отдельно -> {gt_out_dir}")
@@ -249,7 +266,8 @@ def main():
         if img_info is None:
             raise SystemExit(f"картинка с подстрокой {args.image_substr!r} не найдена")
         build_collage(coco, img_info, ugc_test_dir, args.score_thresh, Path(args.out), preds_cache,
-                      ignore_by_img, thresh_overrides=thresh_overrides, gt_out_dir=Path(args.gt_out_dir))
+                      room_by_img, true_ignore_by_img, thresh_overrides=thresh_overrides,
+                      gt_out_dir=Path(args.gt_out_dir))
 
 
 if __name__ == "__main__":

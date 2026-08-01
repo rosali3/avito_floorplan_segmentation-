@@ -51,18 +51,33 @@ def _pred_to_binary_mask(pred: dict, h: int, w: int) -> np.ndarray:
     return mask_utils.decode(rle).astype(bool)
 
 
+ROOM_ID = 8
+LIVING_ID, BEDROOM_ID = 1, 2
+
+
 def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: float = 0.3) -> dict:
     coco_gt = COCO(str(gt_json_path))
     with open(gt_json_path, "r", encoding="utf-8") as f:
         gt_raw = json.load(f)
+    # room-регионы (сырой UGC не различает living/bedroom) становятся сравниваемым
+    # GT-классом ROOM_ID; остальные исключённые категории (coridor/hall/stairs/
+    # storage/toilet) по-прежнему полностью игнорируются (не входят ни в valid_mask)
     ignore_by_img: dict[int, list[dict]] = {}
+    room_by_img: dict[int, list[dict]] = {}
     for region in gt_raw.get("ignore_regions", []):
-        ignore_by_img.setdefault(region["image_id"], []).append(region)
+        bucket = room_by_img if region.get("raw_name") == "room" else ignore_by_img
+        bucket.setdefault(region["image_id"], []).append(region)
 
     if isinstance(predictions, (str, Path)):
         with open(predictions, "r", encoding="utf-8") as f:
             predictions = json.load(f)
     predictions = [p for p in predictions if p.get("score", 1.0) >= score_thresh]
+    # living/bedroom предсказания переименовываем в room — сравнивать их напрямую
+    # с несуществующим в GT различием living/bedroom было бы нечестно
+    predictions = [
+        {**p, "category_id": ROOM_ID} if p["category_id"] in (LIVING_ID, BEDROOM_ID) else p
+        for p in predictions
+    ]
 
     preds_by_img_cat: dict[tuple[int, int], list[dict]] = {}
     for p in predictions:
@@ -71,9 +86,12 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
     gt_by_img_cat: dict[tuple[int, int], list[dict]] = {}
     for ann in coco_gt.loadAnns(coco_gt.getAnnIds()):
         gt_by_img_cat.setdefault((ann["image_id"], ann["category_id"]), []).append(ann)
+    for img_id, regions in room_by_img.items():
+        gt_by_img_cat.setdefault((img_id, ROOM_ID), []).extend(regions)
 
-    cat_ids = coco_gt.getCatIds()
-    cat_id_to_name = {c["id"]: c["name"] for c in coco_gt.loadCats(cat_ids)}
+    cat_ids = list(coco_gt.getCatIds()) + [ROOM_ID]
+    cat_id_to_name = {c["id"]: c["name"] for c in coco_gt.loadCats(coco_gt.getCatIds())}
+    cat_id_to_name[ROOM_ID] = "room"
     img_info = {im["id"]: im for im in coco_gt.loadImgs(coco_gt.getImgIds())}
 
     # tp/fp/fn/tn в пикселях, суммарно по всем картинкам, отдельно на класс
