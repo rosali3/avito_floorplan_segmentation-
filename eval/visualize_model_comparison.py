@@ -42,23 +42,18 @@ MODEL_DIRS = [
 ROOM_ID = 8
 LIVING_ID, BEDROOM_ID = 1, 2
 PALETTE = {
-    1: (255, 99, 71),    # living (фактически не рисуется — см. remap ниже)
-    2: (60, 179, 113),   # bedroom (тоже)
+    1: (255, 99, 71),    # living — предсказания модели, как есть (не переименовываем)
+    2: (60, 179, 113),   # bedroom — тоже
     3: (65, 105, 225),   # bathroom
     4: (255, 215, 0),    # kitchen
     5: (238, 130, 238),  # balcony
     6: (128, 128, 128),  # wall
     7: (255, 140, 0),    # opening
-    8: (139, 69, 19),    # room (raw UGC "room" + переименованные living/bedroom)
+    8: (139, 69, 19),    # room — только сырая UGC-категория "room" в GT
 }
 
-# living/bedroom не показываем в легенде — сырой UGC их не различает, поэтому
-# и GT, и предсказания сведены к общему "room" (см. remap_room_id)
-CLASS_NAMES = {3: "bathroom", 4: "kitchen", 5: "balcony", 6: "wall", 7: "opening", 8: "room"}
-
-
-def remap_room_id(cid: int) -> int:
-    return ROOM_ID if cid in (LIVING_ID, BEDROOM_ID) else cid
+CLASS_NAMES = {1: "living", 2: "bedroom", 3: "bathroom", 4: "kitchen",
+               5: "balcony", 6: "wall", 7: "opening", 8: "room (только GT)"}
 
 
 def legend_handles():
@@ -120,7 +115,7 @@ def pred_class_masks(preds: list[dict], img_id: int, h: int, w: int, score_thres
     for p in preds:
         if p["image_id"] != img_id or p.get("score", 1.0) < score_thresh:
             continue
-        cid = remap_room_id(p["category_id"])
+        cid = p["category_id"]
         m = ann_or_pred_to_mask(p["segmentation"], h, w)
         out[cid] = out.get(cid, np.zeros((h, w), bool)) | m
     return out
@@ -161,9 +156,7 @@ def load_predictions_cache(output_dir: Path) -> dict[str, list[dict] | None]:
 def build_collage(coco: COCO, img_info: dict, ugc_test_dir: Path,
                    score_thresh: float, out_path: Path, preds_cache: dict,
                    room_by_img: dict[int, list[dict]], true_ignore_by_img: dict[int, list[dict]],
-                   thresh_overrides: dict[str, float] | None = None,
                    gt_out_dir: Path | None = None) -> None:
-    thresh_overrides = thresh_overrides or {}
     img_id, h, w = img_info["id"], img_info["height"], img_info["width"]
     image_bgr = cv2.imread(str(ugc_test_dir / "images" / img_info["file_name"]))
     if image_bgr is None:
@@ -184,10 +177,8 @@ def build_collage(coco: COCO, img_info: dict, ugc_test_dir: Path,
         if preds is None:
             panels.append((f"{label}\n(нет предсказаний)", image_bgr.copy()))
             continue
-        thresh = thresh_overrides.get(model_key, score_thresh)
-        cmasks = pred_class_masks(preds, img_id, h, w, thresh)
-        title = label if model_key not in thresh_overrides else f"{label} (thr={thresh})"
-        panels.append((title, semantic_overlay(image_bgr, cmasks)))
+        cmasks = pred_class_masks(preds, img_id, h, w, score_thresh)
+        panels.append((label, semantic_overlay(image_bgr, cmasks)))
 
     n = len(panels)
     ncols = 5
@@ -201,7 +192,7 @@ def build_collage(coco: COCO, img_info: dict, ugc_test_dir: Path,
     for ax in axes[len(panels):]:
         ax.axis("off")
 
-    fig.suptitle(img_info["file_name"], fontsize=9)
+    fig.suptitle(f"{img_info['file_name']}  (score>={score_thresh} для всех моделей)", fontsize=9)
     fig.legend(handles=legend_handles(), loc="lower center", ncol=len(CLASS_NAMES),
                fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.02))
     fig.tight_layout(rect=(0, 0.03, 1, 1))
@@ -216,23 +207,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--image-substr", default=None, help="подстрока имени файла для одной картинки")
     ap.add_argument("--all", action="store_true", help="сгенерировать коллаж для каждой картинки test-сплита")
-    ap.add_argument("--score-thresh", type=float, default=0.3)
+    ap.add_argument("--score-thresh", type=float, default=0.1,
+                     help="единый порог confidence для ВСЕХ моделей (честное сравнение)")
     ap.add_argument("--out", default="docs/report_assets/model_comparison_visual.png",
                      help="путь для --image-substr; для --all используется как папка")
     ap.add_argument("--out-dir", default="docs/report_assets/ugc_comparisons",
                      help="папка для коллажей при --all")
     ap.add_argument("--gt-out-dir", default="docs/report_assets/ugc_gt_masks",
                      help="папка для отдельных GT-наложений (без сетки моделей)")
-    ap.add_argument("--rfdetr-thresh", type=float, default=0.1,
-                     help="отдельный (пониженный) порог confidence для RF-DETR")
-    ap.add_argument("--yolo-thresh", type=float, default=0.1,
-                     help="отдельный (пониженный) порог confidence для YOLO")
     args = ap.parse_args()
-
-    thresh_overrides = {
-        "rfdetr_seg": args.rfdetr_thresh, "rfdetr_seg_fullaug": args.rfdetr_thresh,
-        "yolo_seg": args.yolo_thresh, "yolo_seg_fullaug": args.yolo_thresh,
-    }
 
     if not args.all and not args.image_substr:
         raise SystemExit("укажи --image-substr <подстрока> или --all")
@@ -258,7 +241,7 @@ def main():
             stem = Path(img_info["file_name"]).stem
             build_collage(coco, img_info, ugc_test_dir, args.score_thresh,
                           out_dir / f"{stem}.png", preds_cache, room_by_img, true_ignore_by_img,
-                          thresh_overrides=thresh_overrides, gt_out_dir=gt_out_dir)
+                          gt_out_dir=gt_out_dir)
         print(f"[visualize_model_comparison] всего: {len(all_imgs)} -> {out_dir}")
         print(f"[visualize_model_comparison] GT-наложения отдельно -> {gt_out_dir}")
     else:
@@ -266,8 +249,7 @@ def main():
         if img_info is None:
             raise SystemExit(f"картинка с подстрокой {args.image_substr!r} не найдена")
         build_collage(coco, img_info, ugc_test_dir, args.score_thresh, Path(args.out), preds_cache,
-                      room_by_img, true_ignore_by_img, thresh_overrides=thresh_overrides,
-                      gt_out_dir=Path(args.gt_out_dir))
+                      room_by_img, true_ignore_by_img, gt_out_dir=Path(args.gt_out_dir))
 
 
 if __name__ == "__main__":

@@ -72,12 +72,10 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
         with open(predictions, "r", encoding="utf-8") as f:
             predictions = json.load(f)
     predictions = [p for p in predictions if p.get("score", 1.0) >= score_thresh]
-    # living/bedroom предсказания переименовываем в room — сравнивать их напрямую
-    # с несуществующим в GT различием living/bedroom было бы нечестно
-    predictions = [
-        {**p, "category_id": ROOM_ID} if p["category_id"] in (LIVING_ID, BEDROOM_ID) else p
-        for p in predictions
-    ]
+    # предсказания НЕ переименовываем и не объединяем — living/bedroom остаются
+    # ровно тем, что предсказала модель. Различие в том, ЧТО считается верным
+    # ответом для GT="room": там правильны ОБА (living И bedroom), см. ниже
+    # при построении p_mask для cid == ROOM_ID.
 
     preds_by_img_cat: dict[tuple[int, int], list[dict]] = {}
     for p in predictions:
@@ -89,8 +87,11 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
     for img_id, regions in room_by_img.items():
         gt_by_img_cat.setdefault((img_id, ROOM_ID), []).extend(regions)
 
-    cat_ids = list(coco_gt.getCatIds()) + [ROOM_ID]
-    cat_id_to_name = {c["id"]: c["name"] for c in coco_gt.loadCats(coco_gt.getCatIds())}
+    # living(1)/bedroom(2) сами по себе никогда не встречаются в GT (сырой UGC
+    # их не различает) — как самостоятельные классы не скорим, только через room
+    real_cat_ids = [cid for cid in coco_gt.getCatIds() if cid not in (LIVING_ID, BEDROOM_ID)]
+    cat_ids = real_cat_ids + [ROOM_ID]
+    cat_id_to_name = {c["id"]: c["name"] for c in coco_gt.loadCats(real_cat_ids)}
     cat_id_to_name[ROOM_ID] = "room"
     img_info = {im["id"]: im for im in coco_gt.loadImgs(coco_gt.getImgIds())}
 
@@ -106,7 +107,12 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
 
         for cid in cat_ids:
             gt_anns = gt_by_img_cat.get((img_id, cid), [])
-            pred_anns = preds_by_img_cat.get((img_id, cid), [])
+            if cid == ROOM_ID:
+                # правильный ответ для GT="room" — ЛЮБОЕ из living/bedroom
+                pred_anns = (preds_by_img_cat.get((img_id, LIVING_ID), [])
+                             + preds_by_img_cat.get((img_id, BEDROOM_ID), []))
+            else:
+                pred_anns = preds_by_img_cat.get((img_id, cid), [])
             if not gt_anns and not pred_anns:
                 continue  # класса нет ни в GT, ни в предсказаниях на этой картинке — пропускаем, не раздуваем TN нулями
 
