@@ -33,6 +33,7 @@ from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 
 from mask_nms import mask_nms
+from mask_cleanup import fill_holes_and_denoise
 
 
 def _ann_to_binary_mask(coco_gt: COCO, ann: dict, h: int, w: int) -> np.ndarray:
@@ -58,7 +59,7 @@ LIVING_ID, BEDROOM_ID = 1, 2
 
 
 def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: float = 0.3,
-                           nms_iou: float | None = None) -> dict:
+                           nms_iou: float | None = None, fill_holes: bool = False) -> dict:
     coco_gt = COCO(str(gt_json_path))
     with open(gt_json_path, "r", encoding="utf-8") as f:
         gt_raw = json.load(f)
@@ -130,6 +131,9 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
             for pred in pred_anns:
                 p_mask |= _pred_to_binary_mask(pred, h, w)
 
+            if fill_holes:
+                p_mask = fill_holes_and_denoise(p_mask)
+
             # пиксели внутри ignore_regions (room/coridor/hall/...) не считаем ни
             # в чью пользу — истинный класс там неизвестен, нельзя судить о TP/FP
             g_mask &= valid_mask
@@ -185,9 +189,13 @@ def main():
     ap.add_argument("--score-thresh", type=float, default=0.3)
     ap.add_argument("--nms-iou", type=float, default=None,
                      help="mask-NMS перед подсчётом метрик (напр. 0.5); по умолчанию выключено")
+    ap.add_argument("--fill-holes", action="store_true",
+                     help="заливка внутренних дыр + удаление мелкого шума в предсказанной маске "
+                          "(полезно для семантических моделей типа SegFormer/UNet)")
     args = ap.parse_args()
 
-    metrics = compute_pixel_metrics(args.gt, args.pred, score_thresh=args.score_thresh, nms_iou=args.nms_iou)
+    metrics = compute_pixel_metrics(args.gt, args.pred, score_thresh=args.score_thresh,
+                                     nms_iou=args.nms_iou, fill_holes=args.fill_holes)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
