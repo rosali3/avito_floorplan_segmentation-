@@ -10,8 +10,11 @@
   - restroom -> bathroom (см. classes.yaml, явное указание из ТЗ)
   - door/window/enterence -> opening
   - bathroom/kitchen/balcony/wall -> как есть
-  - toilet(id root)/coridor/hall/room/stairs/storage -> ИСКЛЮЧЕНЫ из GT
-    (аннотации этих категорий отбрасываются, а не насильно к чему-то приравниваются)
+  - toilet(id root)/coridor/hall/room/stairs/storage -> ИСКЛЮЧЕНЫ из GT как классы,
+    но их геометрия сохраняется в top-level ключе "ignore_regions" (не как annotations!) —
+    чтобы модель не штрафовалась как false positive за живой/спальню и т.п. именно
+    в этой зоне (мы не знаем истинный тип "room", поэтому такое предсказание не
+    может быть ни правильным, ни неправильным). См. eval/coco_eval_common.py.
 
 ТОЛЬКО ЧИТАЕТ ugc_labeled/. Пишет в project_root/data/ugc_test/
 (картинки копируются, не симлинкаются — чтобы test-сплит был самодостаточным
@@ -71,6 +74,7 @@ def main():
     categories = canonical_categories(classes_cfg)
     merged_images = []
     merged_anns = []
+    merged_ignore_regions = []
     next_image_id = 1
     next_ann_id = 1
 
@@ -115,6 +119,11 @@ def main():
             raw_cat_id = ann["category_id"]
             if raw_cat_id not in raw_id_to_canon_id:
                 n_dropped_by_excluded_cat += 1
+                merged_ignore_regions.append({
+                    "image_id": old_to_new_image_id[ann["image_id"]],
+                    "segmentation": ann["segmentation"],
+                    "bbox": ann["bbox"],
+                })
                 continue
             merged_anns.append({
                 "id": next_ann_id,
@@ -134,13 +143,15 @@ def main():
         "images": merged_images,
         "annotations": merged_anns,
         "categories": categories,
+        "ignore_regions": merged_ignore_regions,
     }
     out_json = out_dir / "test_coco.json"
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(merged, f, ensure_ascii=False)
 
     print(f"[prepare_ugc_test] скопировано картинок: {n_copied}")
-    print(f"[prepare_ugc_test] аннотаций отброшено (исключённые категории): {n_dropped_by_excluded_cat}")
+    print(f"[prepare_ugc_test] аннотаций сохранено как ignore_regions (исключённые категории): "
+          f"{n_dropped_by_excluded_cat}")
     print(f"[prepare_ugc_test] итог: images={len(merged_images)} annotations={len(merged_anns)} "
           f"-> {out_json}")
     if len(merged_images) < 50:

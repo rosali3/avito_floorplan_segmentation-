@@ -40,7 +40,61 @@ def polygon_to_rle(polygons: list[list[float]], height: int, width: int) -> dict
     return rle
 
 
-def run_coco_eval(gt_json_path: str | Path, predictions, iou_type: str = "segm") -> dict:
+def filter_predictions_in_ignore_regions(gt_json_path: str | Path, predictions: list[dict],
+                                          overlap_thresh: float = 0.5) -> tuple[list[dict], int]:
+    """Выбрасывает предсказания, чей bbox на >= overlap_thresh своей площади лежит
+    внутри ignore_regions (см. data_prep/prepare_ugc_test.py) — геометрия
+    категорий room/coridor/hall/stairs/storage, исключённых из GT-таксономии.
+    Модель не должна штрафоваться (как FP) за предсказание living/bedroom/etc.
+    именно в такой зоне — истинный тип "room" нам неизвестен.
+
+    Возвращает (отфильтрованный список предсказаний, число выброшенных).
+    """
+    with open(gt_json_path, "r", encoding="utf-8") as f:
+        gt = json.load(f)
+    ignore_regions = gt.get("ignore_regions", [])
+    if not ignore_regions:
+        return predictions, 0
+
+    img_wh = {im["id"]: (im["height"], im["width"]) for im in gt["images"]}
+    ignore_by_img: dict[int, list[dict]] = {}
+    for region in ignore_regions:
+        ignore_by_img.setdefault(region["image_id"], []).append(region)
+
+    kept = []
+    n_dropped = 0
+    for pred in predictions:
+        img_id = pred["image_id"]
+        regions = ignore_by_img.get(img_id)
+        if not regions or img_id not in img_wh:
+            kept.append(pred)
+            continue
+        h, w = img_wh[img_id]
+        pred_mask = _pred_seg_to_mask(pred["segmentation"], h, w)
+        pred_area = pred_mask.sum()
+        if pred_area == 0:
+            kept.append(pred)
+            continue
+        ignore_mask = np.zeros((h, w), dtype=bool)
+        for region in regions:
+            ignore_mask |= _pred_seg_to_mask(region["segmentation"], h, w)
+        overlap = np.logical_and(pred_mask, ignore_mask).sum() / pred_area
+        if overlap >= overlap_thresh:
+            n_dropped += 1
+        else:
+            kept.append(pred)
+    return kept, n_dropped
+
+
+def _pred_seg_to_mask(seg, h: int, w: int) -> np.ndarray:
+    if isinstance(seg, dict):
+        return mask_utils.decode(seg).astype(bool)
+    rles = mask_utils.frPyObjects(seg, h, w)
+    return mask_utils.decode(mask_utils.merge(rles)).astype(bool)
+
+
+def run_coco_eval(gt_json_path: str | Path, predictions, iou_type: str = "segm",
+                   filter_ignore_regions: bool = True) -> dict:
     """predictions: путь к json ИЛИ уже загруженный list[dict] в формате COCO results.
 
     Возвращает dict с ключевыми метриками + per-category AP@[.5:.95] и AP50.
@@ -50,6 +104,11 @@ def run_coco_eval(gt_json_path: str | Path, predictions, iou_type: str = "segm")
     if isinstance(predictions, (str, Path)):
         with open(predictions, "r", encoding="utf-8") as f:
             predictions = json.load(f)
+
+    if filter_ignore_regions:
+        predictions, n_dropped = filter_predictions_in_ignore_regions(gt_json_path, predictions)
+        if n_dropped:
+            print(f"[coco_eval_common] отфильтровано предсказаний в ignore_regions (room/hall/...): {n_dropped}")
 
     if len(predictions) == 0:
         print("[coco_eval_common] ПРЕДУПРЕЖДЕНИЕ: пустой список предсказаний — "
