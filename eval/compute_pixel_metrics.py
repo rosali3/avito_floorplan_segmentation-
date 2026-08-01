@@ -32,6 +32,8 @@ import numpy as np
 from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 
+from mask_nms import mask_nms
+
 
 def _ann_to_binary_mask(coco_gt: COCO, ann: dict, h: int, w: int) -> np.ndarray:
     seg = ann["segmentation"]
@@ -55,7 +57,8 @@ ROOM_ID = 8
 LIVING_ID, BEDROOM_ID = 1, 2
 
 
-def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: float = 0.3) -> dict:
+def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: float = 0.3,
+                           nms_iou: float | None = None) -> dict:
     coco_gt = COCO(str(gt_json_path))
     with open(gt_json_path, "r", encoding="utf-8") as f:
         gt_raw = json.load(f)
@@ -76,6 +79,9 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
     # ровно тем, что предсказала модель. Различие в том, ЧТО считается верным
     # ответом для GT="room": там правильны ОБА (living И bedroom), см. ниже
     # при построении p_mask для cid == ROOM_ID.
+    if nms_iou is not None:
+        img_wh = {im["id"]: (im["height"], im["width"]) for im in coco_gt.loadImgs(coco_gt.getImgIds())}
+        predictions = mask_nms(predictions, img_wh, iou_thresh=nms_iou)
 
     preds_by_img_cat: dict[tuple[int, int], list[dict]] = {}
     for p in predictions:
@@ -147,11 +153,15 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
         denom_prec = tp + fp
         denom_rec = tp + fn
         denom_acc = tp + fp + fn + tn
+        precision = tp / denom_prec if denom_prec else float("nan")
+        recall = tp / denom_rec if denom_rec else float("nan")
+        denom_f1 = precision + recall
         per_category[cat_id_to_name[cid]] = {
             "iou": tp / denom_iou if denom_iou else float("nan"),
             "dice": 2 * tp / denom_dice if denom_dice else float("nan"),
-            "precision": tp / denom_prec if denom_prec else float("nan"),
-            "recall": tp / denom_rec if denom_rec else float("nan"),
+            "precision": precision,
+            "recall": recall,
+            "f1": 2 * precision * recall / denom_f1 if denom_f1 == denom_f1 and denom_f1 else float("nan"),
             "accuracy": (tp + tn) / denom_acc if denom_acc else float("nan"),
             "n_images_with_gt_or_pred": sum(
                 1 for img_id in img_info
@@ -163,7 +173,7 @@ def compute_pixel_metrics(gt_json_path: str | Path, predictions, score_thresh: f
         vals = [v[key] for v in per_category.values() if v[key] == v[key]]  # drop NaN
         return sum(vals) / len(vals) if vals else float("nan")
 
-    overall = {k: macro(k) for k in ("iou", "dice", "precision", "recall", "accuracy")}
+    overall = {k: macro(k) for k in ("iou", "dice", "precision", "recall", "f1", "accuracy")}
     return {"score_thresh": score_thresh, "overall_macro": overall, "per_category": per_category}
 
 
@@ -173,9 +183,11 @@ def main():
     ap.add_argument("--pred", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--score-thresh", type=float, default=0.3)
+    ap.add_argument("--nms-iou", type=float, default=None,
+                     help="mask-NMS перед подсчётом метрик (напр. 0.5); по умолчанию выключено")
     args = ap.parse_args()
 
-    metrics = compute_pixel_metrics(args.gt, args.pred, score_thresh=args.score_thresh)
+    metrics = compute_pixel_metrics(args.gt, args.pred, score_thresh=args.score_thresh, nms_iou=args.nms_iou)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
