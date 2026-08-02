@@ -36,16 +36,23 @@ from coco_utils import load_paths  # noqa: E402
 from coco_eval_common import binary_mask_to_rle  # noqa: E402
 
 
-def run_rfdetr(gt_path: Path, images_root: Path, paths: dict, threshold: float) -> list[dict]:
+def run_rfdetr(gt_path: Path, images_root: Path, paths: dict, threshold: float,
+                model_key: str = "rfdetr_seg") -> list[dict]:
     from rfdetr import RFDETRSegMedium
 
-    train_ann = Path(paths["derived"]["rfdetr_dataset_dir"]) / "train" / "_annotations.coco.json"
+    if model_key == "rfdetr_seg_fullaug":
+        # fullaug обучен на data_v2 (ремаплено в наши 7 канонических классов
+        # через data_prep/remap_fullaug_v2.py) — тот же порядок категорий,
+        # но своя копия train_coco.json, не data/rfdetr_ds
+        train_ann = Path(paths["project_root"]) / "data_v2" / "train_coco.json"
+    else:
+        train_ann = Path(paths["derived"]["rfdetr_dataset_dir"]) / "train" / "_annotations.coco.json"
     with open(train_ann, "r", encoding="utf-8") as f:
         train_coco = json.load(f)
     cats = sorted(train_coco["categories"], key=lambda c: c["id"])
     class_id_map = {i: c["id"] for i, c in enumerate(cats)}
 
-    ckpt = Path(paths["derived"]["output_dir"]) / "rfdetr_seg" / "checkpoints" / "checkpoint_best_ema.pth"
+    ckpt = Path(paths["derived"]["output_dir"]) / model_key / "checkpoints" / "checkpoint_best_ema.pth"
     model = RFDETRSegMedium(pretrain_weights=str(ckpt))
 
     with open(gt_path, "r", encoding="utf-8") as f:
@@ -145,7 +152,8 @@ def run_unet(gt_path: Path, images_root: Path, paths: dict) -> list[dict]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["rfdetr_seg", "unet_baseline"])
+    ap.add_argument("--model", required=True,
+                     choices=["rfdetr_seg", "rfdetr_seg_fullaug", "unet_baseline"])
     ap.add_argument("--threshold", type=float, default=0.1)
     args = ap.parse_args()
 
@@ -153,8 +161,8 @@ def main():
     gt_path = Path(paths["derived"]["data_dir"]) / "valid_coco.json"
     images_root = Path(paths["combined_out_root"]) / "images"
 
-    if args.model == "rfdetr_seg":
-        predictions = run_rfdetr(gt_path, images_root, paths, args.threshold)
+    if args.model in ("rfdetr_seg", "rfdetr_seg_fullaug"):
+        predictions = run_rfdetr(gt_path, images_root, paths, args.threshold, model_key=args.model)
     else:
         predictions = run_unet(gt_path, images_root, paths)
 
