@@ -25,7 +25,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "data_prep"))
 from coco_utils import load_paths  # noqa: E402
 from compute_confusion_matrix import gt_label_map, pred_label_map, split_ignore_regions, true_ignore_mask  # noqa: E402
-from wall_bounded_fill import wall_bounded_fill  # noqa: E402
+from wall_bounded_fill import wall_bounded_fill, WALL_ID, OPENING_ID, ROOM_TYPE_IDS  # noqa: E402
 from mask_nms import mask_nms  # noqa: E402
 
 PALETTE = {
@@ -34,6 +34,31 @@ PALETTE = {
 }
 CLASS_NAMES = {1: "living", 2: "bedroom", 3: "bathroom", 4: "kitchen",
                5: "balcony", 6: "wall", 7: "opening", 8: "room (только GT)"}
+
+BOUNDARY_LINE_COLOR = (0, 0, 0)     # чёрный контур — где алгоритм видит wall+opening
+ACCENT_FILL_COLOR = (255, 0, 255)   # неоновый розовый (BGR) — пиксели, дозаполненные wall-fill
+
+
+def draw_boundary_contour(image_bgr: np.ndarray, boundary_mask: np.ndarray, thickness: int = 3) -> np.ndarray:
+    """Жирный контур по границе (wall+opening из предсказания) — где алгоритм
+    "видит" стену/проём, из которых строится замкнутая область."""
+    out = image_bgr.copy()
+    mask_u8 = (boundary_mask.astype(np.uint8)) * 255
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out, contours, -1, BOUNDARY_LINE_COLOR, thickness)
+    return out
+
+
+def highlight_filled_pixels(base_bgr: np.ndarray, before_map: np.ndarray, after_map: np.ndarray,
+                             room_type_ids: list[int], alpha: float = 0.85) -> np.ndarray:
+    """Суперакцентная заливка ТОЛЬКО тех пикселей, которые wall-fill реально
+    добавил/перекрасил в room-тип (было что-то другое, стало room-класс)."""
+    out = base_bgr.astype(np.float32).copy()
+    changed = (before_map != after_map) & np.isin(after_map, room_type_ids)
+    if changed.any():
+        color = np.array(ACCENT_FILL_COLOR, dtype=np.float32)
+        out[changed] = out[changed] * (1 - alpha) + color * alpha
+    return out.astype(np.uint8)
 
 
 def legend_handles():
@@ -124,9 +149,17 @@ def main():
         panels = [("GT", gt_overlay_for(coco, img_id, h, w, room_by_img, ignore_by_img, image_bgr))]
         for model_key, label in (("segformer", "SegFormer"), ("unet_baseline", "UNet-simple")):
             pmap = pred_label_map(preds_by_model[model_key], img_id, h, w, args.score_thresh)
-            panels.append((f"{label} — до", overlay_from_label_map(image_bgr, pmap)))
+            boundary = np.isin(pmap, [WALL_ID, OPENING_ID])
+
+            before_panel = overlay_from_label_map(image_bgr, pmap)
+            before_panel = draw_boundary_contour(before_panel, boundary, thickness=3)
+            panels.append((f"{label} — до (контур = wall+opening)", before_panel))
+
             filled = wall_bounded_fill(pmap, min_room_frac=args.min_room_frac)
-            panels.append((f"{label} — после (wall-fill)", overlay_from_label_map(image_bgr, filled)))
+            after_panel = overlay_from_label_map(image_bgr, filled)
+            after_panel = highlight_filled_pixels(after_panel, pmap, filled, ROOM_TYPE_IDS)
+            after_panel = draw_boundary_contour(after_panel, boundary, thickness=3)
+            panels.append((f"{label} — после (розовым = дозаполнено)", after_panel))
 
         fig, axes = plt.subplots(1, 5, figsize=(20, 4.5))
         for ax, (title, panel) in zip(axes, panels):
