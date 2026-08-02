@@ -1,5 +1,9 @@
 # Пост-процессинг для room/living/bedroom: эксперименты
 
+*Эксперименты по обучению моделей, методологии оценки (ignore-regions,
+room=living∪bedroom, единый порог 0.1) и confidence-threshold sweep —
+в [`experiments_log.md`](experiments_log.md).*
+
 ## Mask-NMS для RF-DETR: удаление дублирующих инстансов
 
 RF-DETR на низком score-threshold (0.1) плохо откалиброван и выдаёт много

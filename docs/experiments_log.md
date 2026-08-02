@@ -1,12 +1,16 @@
----
-license: mit
----
+# Журнал экспериментов: обучение моделей, методология оценки, threshold sweep
 
-# avito-floorplan-checkpoints
+*Это git-tracked зеркало `output/hf_readme.md` (модель-карточка для
+HuggingFace Hub, `output/` целиком в `.gitignore` и не виден из этого
+репозитория) — источник правды по чекпоинтам и таксономии классов, при
+редактуре обновляй сначала `output/hf_readme.md`, затем копируй сюда.*
 
-Чекпоинты instance-segmentation моделей из сравнительного исследования
-сегментации комнат на поэтажных планах (ResPlan_v2 + CubiCasa5K для
-обучения, реальные UGC-фото с Avito для теста). Код: см. основной проект.
+Сравнительное исследование сегментации комнат на поэтажных планах
+(ResPlan_v2 + CubiCasa5K для обучения, реальные UGC-фото с Avito для
+теста).
+
+Классы (везде одинаковые, id 1-7): `living, bedroom, bathroom, kitchen,
+balcony, wall, opening`.
 
 Классы (везде одинаковые, id 1-7): `living, bedroom, bathroom, kitchen,
 balcony, wall, opening`.
@@ -17,7 +21,7 @@ Train/valid split: 80/20, seed=42, одинаковый для всех моде
 оценки и confidence-threshold. Эксперименты с **пост-процессингом
 room/living/bedroom** (заливка по границам, squareness-фильтр, mask-NMS
 для RF-DETR — числа и коллажи) вынесены отдельно:
-[`docs/room_postprocessing_experiments.md`](../docs/room_postprocessing_experiments.md).
+[`room_postprocessing_experiments.md`](room_postprocessing_experiments.md).
 
 ## RF-DETR-Seg (Medium)
 
