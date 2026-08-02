@@ -12,9 +12,6 @@ HuggingFace Hub, `output/` целиком в `.gitignore` и не виден и�
 Классы (везде одинаковые, id 1-7): `living, bedroom, bathroom, kitchen,
 balcony, wall, opening`.
 
-Классы (везде одинаковые, id 1-7): `living, bedroom, bathroom, kitchen,
-balcony, wall, opening`.
-
 Train/valid split: 80/20, seed=42, одинаковый для всех моделей.
 
 **Этот файл** — журнал экспериментов по обучению моделей, методологии
