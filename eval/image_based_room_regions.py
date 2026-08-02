@@ -37,19 +37,73 @@ from wall_bounded_fill import evaluate_dense, summarize, ROOM_TYPE_IDS  # noqa: 
 from mask_nms import mask_nms  # noqa: E402
 
 
+def detect_plan_extent(image_bgr: np.ndarray, density_window: int = 41, density_frac: float = 0.05
+                        ) -> tuple[int, int, int, int] | None:
+    """Находит bbox области с ПЛОТНЫМ скоплением чернил (много линий рядом
+    друг с другом — сам чертёж), а не просто любых тёмных пикселей — иначе
+    морфологическое закрытие слепляет чертёж+текст+водяной знак+рамку
+    страницы в один blob на весь кадр (так и было с первой версией).
+    Идея: считаем локальную плотность чернил box-фильтром в большом окне —
+    у плотной сетки линий плана плотность высокая, у одиночного текста/лого
+    в поле — низкая, даже если само пятно тёмное.
+
+    "Чернила" = Otsu-порог по яркости, а НЕ фиксированный abs-порог: на
+    реальных UGC-фото фон не белый (162 в среднем на тестовом кадре,
+    diapason 127-204), а фикс. порог 200 ловит 99.9% пикселей как "чернила"
+    и extent всегда = весь кадр. Otsu подстраивается под конкретное фото."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    ink = (ink > 0).astype(np.float32)
+    density = cv2.boxFilter(ink, ddepth=-1, ksize=(density_window, density_window))
+    dense_mask = (density > density_frac).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(dense_mask, connectivity=8)
+    if n <= 1:
+        return None
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    idx = int(areas.argmax()) + 1
+    x, y, w, h = stats[idx, :4]
+    return int(x), int(y), int(w), int(h)
+
+
+def adaptive_threshold_boundary(gray: np.ndarray, block_size: int = 25, c: int = 10) -> np.ndarray:
+    """Альтернатива Canny: прямая бинаризация "чернила vs бумага" по локальной
+    окрестности — стандартная техника для документов с неровным освещением
+    фото (в отличие от Canny, которому нужен градиент, а не абсолютная
+    яркость)."""
+    return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY_INV, block_size, c)
+
+
 def detect_room_regions(image_bgr: np.ndarray, canny_lo: int = 50, canny_hi: int = 150,
                          dilate_iters: int = 2, min_area_frac: float = 0.01,
-                         use_clahe: bool = False, clahe_clip: float = 2.0) -> np.ndarray:
+                         use_clahe: bool = False, clahe_clip: float = 2.0,
+                         clahe_tile: int = 8, edge_method: str = "canny",
+                         adaptive_block: int = 25, adaptive_c: int = 10,
+                         restrict_to_extent: bool = False,
+                         extent_density_window: int = 41, extent_density_frac: float = 0.05) -> np.ndarray:
     """Возвращает HxW int32: 0 = граница/шум/слишком мелкая область, 1..N = room-region id."""
     h, w = image_bgr.shape[:2]
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     if use_clahe:
-        clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=(clahe_tile, clahe_tile))
         gray = clahe.apply(gray)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(gray, canny_lo, canny_hi)
+
+    if edge_method == "adaptive":
+        edges = adaptive_threshold_boundary(gray, adaptive_block, adaptive_c)
+    else:
+        edges = cv2.Canny(gray, canny_lo, canny_hi)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     edges = cv2.dilate(edges, kernel, iterations=dilate_iters)
+
+    if restrict_to_extent:
+        extent = detect_plan_extent(image_bgr, density_window=extent_density_window,
+                                     density_frac=extent_density_frac)
+        if extent is not None:
+            ex, ey, ew, eh = extent
+            outside = np.ones((h, w), dtype=bool)
+            outside[ey:ey + eh, ex:ex + ew] = False
+            edges[outside] = 255  # всё за пределами чертежа — тоже "граница" (исключаем)
 
     interior = (edges == 0).astype(np.uint8)
     n, labels = cv2.connectedComponents(interior, connectivity=8)
@@ -94,6 +148,10 @@ def main():
     ap.add_argument("--min-area-frac", type=float, default=0.01)
     ap.add_argument("--use-clahe", action="store_true")
     ap.add_argument("--clahe-clip", type=float, default=2.0)
+    ap.add_argument("--edge-method", choices=["canny", "adaptive"], default="canny")
+    ap.add_argument("--adaptive-block", type=int, default=25)
+    ap.add_argument("--adaptive-c", type=int, default=10)
+    ap.add_argument("--restrict-to-extent", action="store_true")
     args = ap.parse_args()
 
     paths = load_paths()
@@ -127,7 +185,10 @@ def main():
 
         regions = detect_room_regions(image_bgr, args.canny_lo, args.canny_hi,
                                        args.dilate_iters, args.min_area_frac,
-                                       use_clahe=args.use_clahe, clahe_clip=args.clahe_clip)
+                                       use_clahe=args.use_clahe, clahe_clip=args.clahe_clip,
+                                       edge_method=args.edge_method,
+                                       adaptive_block=args.adaptive_block, adaptive_c=args.adaptive_c,
+                                       restrict_to_extent=args.restrict_to_extent)
         filled = majority_fill_by_regions(pm, regions, args.min_room_frac)
         evaluate_dense(gtm, filled, valid, agg_after, class_ids)
 
