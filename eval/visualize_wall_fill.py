@@ -61,6 +61,13 @@ def highlight_filled_pixels(base_bgr: np.ndarray, before_map: np.ndarray, after_
     return out.astype(np.uint8)
 
 
+def diff_only_overlay(image_bgr: np.ndarray, before_map: np.ndarray, after_map: np.ndarray,
+                       room_type_ids: list[int], alpha: float = 0.9) -> np.ndarray:
+    """То же самое, но поверх ЧИСТОГО фото (без цветов классов) — отдельная
+    панель "где заполнилось", без примеси того, "чем" заполнилось."""
+    return highlight_filled_pixels(image_bgr, before_map, after_map, room_type_ids, alpha=alpha)
+
+
 def legend_handles():
     return [mpatches.Patch(color=tuple(c / 255 for c in PALETTE[cid]), label=name)
             for cid, name in CLASS_NAMES.items()]
